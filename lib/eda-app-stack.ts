@@ -10,7 +10,6 @@ import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as iam from "aws-cdk-lib/aws-iam";
 
 import { Construct } from "constructs";
-// import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -23,11 +22,19 @@ export class EDAAppStack extends cdk.Stack {
     });
 
     // Integration infrastructure
-    const queue = new sqs.Queue(this, "img-created-queue", {
+    const queue = new sqs.Queue(this, "img-event-queue", {
       receiveMessageWaitTime: cdk.Duration.seconds(5),
     });
 
-    // Lambda functions
+    const imageProcessQueue = new sqs.Queue(this, "img-process-queue", {
+      receiveMessageWaitTime: cdk.Duration.seconds(10),
+    });
+
+    const newImageTopic = new sns.Topic(this, "NewImageTopic", {
+      displayName: "New Image topic",
+    });
+
+    // Lambda functions - this was missing
     const processImageFn = new lambdanode.NodejsFunction(
       this,
       "ProcessImageFn",
@@ -39,14 +46,19 @@ export class EDAAppStack extends cdk.Stack {
       }
     );
 
-    // S3 --> SQS
+    // S3 --> SNS
     imagesBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
-      new s3n.SqsDestination(queue)
+      new s3n.SnsDestination(newImageTopic)
+    );
+
+    // SNS --> SQS
+    newImageTopic.addSubscription(
+      new subs.SqsSubscription(imageProcessQueue)
     );
 
     // SQS --> Lambda
-    const newImageEventSource = new events.SqsEventSource(queue, {
+    const newImageEventSource = new events.SqsEventSource(imageProcessQueue, {
       batchSize: 5,
       maxBatchingWindow: cdk.Duration.seconds(5),
     });
