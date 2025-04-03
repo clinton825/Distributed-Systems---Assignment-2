@@ -80,6 +80,11 @@ export class EDAAppStack extends cdk.Stack {
       }
     );
 
+    // Grant permissions for the Lambda functions
+    // LogImage function needs to read from S3 and write to DynamoDB
+    imagesBucket.grantRead(logImageFn);
+    imagesTable.grantWriteData(logImageFn);
+
     // Lambda Function for removing invalid images
     const removeImageFn = new lambdanode.NodejsFunction(
       this,
@@ -91,6 +96,9 @@ export class EDAAppStack extends cdk.Stack {
         memorySize: 128,
       }
     );
+    
+    // RemoveImage function needs to delete from S3
+    imagesBucket.grantDelete(removeImageFn);
 
     // Lambda Function for adding metadata to images
     const addMetadataFn = new lambdanode.NodejsFunction(
@@ -106,6 +114,9 @@ export class EDAAppStack extends cdk.Stack {
         },
       }
     );
+    
+    // AddMetadata function needs to read and write to DynamoDB
+    imagesTable.grantReadWriteData(addMetadataFn);
 
     // Lambda Function for updating image status
     const updateStatusFn = new lambdanode.NodejsFunction(
@@ -121,6 +132,9 @@ export class EDAAppStack extends cdk.Stack {
         },
       }
     );
+    
+    // UpdateStatus function needs to read and write to DynamoDB
+    imagesTable.grantReadWriteData(updateStatusFn);
 
     // Lambda Function for sending status update emails
     const statusMailerFn = new lambdanode.NodejsFunction(
@@ -136,6 +150,16 @@ export class EDAAppStack extends cdk.Stack {
         },
       }
     );
+    
+    // StatusMailer function needs to read from DynamoDB and send emails via SES
+    imagesTable.grantReadData(statusMailerFn);
+    // Grant SES permissions (requires a specific policy for sending emails)
+    statusMailerFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+        resources: ['*'], // Scope this down to specific resources in production
+      })
+    );
 
     // S3 -> SNS: Send object creation events to SNS topic
     imagesBucket.addEventNotification(
@@ -143,18 +167,15 @@ export class EDAAppStack extends cdk.Stack {
       new s3n.SnsDestination(newImageTopic)
     );
 
-    // SNS -> SQS: Subscribe queue to SNS topic with filter for image events
+    // SNS -> SQS: Subscribe queue to SNS topic
     newImageTopic.addSubscription(
-      new subs.SqsSubscription(validImageQueue, {
-        filterPolicy: {
-          "s3:ObjectCreated:*": sns.SubscriptionFilter.existsFilter(),
-        },
-      })
+      new subs.SqsSubscription(validImageQueue)
     );
 
     // SNS -> SQS: Subscribe queue to SNS topic with filter for metadata events
     newImageTopic.addSubscription(
       new subs.SqsSubscription(metadataUpdateQueue, {
+        // Requires a MessageAttribute with metadata_type
         filterPolicy: {
           metadata_type: sns.SubscriptionFilter.existsFilter(),
         },
@@ -164,9 +185,13 @@ export class EDAAppStack extends cdk.Stack {
     // SNS -> SQS: Subscribe queue to SNS topic with filter for status updates
     newImageTopic.addSubscription(
       new subs.SqsSubscription(statusUpdateQueue, {
+        // Matches messages with update.status in the JSON structure
         filterPolicy: {
-          "update.status": sns.SubscriptionFilter.existsFilter(),
+          "update.status": sns.SubscriptionFilter.stringFilter({
+            allowlist: ["Pass", "Reject"],
+          }),
         },
+        rawMessageDelivery: true
       })
     );
 
@@ -219,27 +244,6 @@ export class EDAAppStack extends cdk.Stack {
       ],
     });
     statusMailerFn.addEventSource(streamEventSource);
-
-    // Permissions
-    imagesBucket.grantRead(logImageFn);
-    imagesBucket.grantReadWrite(removeImageFn);
-    imagesTable.grantReadWriteData(logImageFn);
-    imagesTable.grantReadWriteData(addMetadataFn);
-    imagesTable.grantReadWriteData(updateStatusFn);
-    imagesTable.grantReadWriteData(statusMailerFn);
-
-    // Grant SES permissions for email sending
-    statusMailerFn.addToRolePolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: [
-          "ses:SendEmail",
-          "ses:SendRawEmail",
-          "ses:SendTemplatedEmail",
-        ],
-        resources: ["*"],
-      })
-    );
 
     // Outputs
     new cdk.CfnOutput(this, "bucketName", {

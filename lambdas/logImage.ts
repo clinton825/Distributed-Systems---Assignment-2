@@ -11,58 +11,89 @@ const TABLE_NAME = process.env.IMAGES_TABLE || '';
 const VALID_EXTENSIONS = ['.jpeg', '.jpg', '.png'];
 
 export const handler: SQSHandler = async (event) => {
-  console.log("Processing event: ", JSON.stringify(event, null, 2));
+  console.log("LogImage Lambda triggered with event: ", JSON.stringify(event, null, 2));
+  console.log("Using DynamoDB table: ", TABLE_NAME);
+
+  if (!TABLE_NAME) {
+    console.error("ERROR: TABLE_NAME environment variable is not set!");
+    throw new Error("TABLE_NAME environment variable is not set");
+  }
 
   for (const record of event.Records) {
-    const recordBody = JSON.parse(record.body);
-    const snsMessage = JSON.parse(recordBody.Message);
+    try {
+      console.log("Processing record: ", JSON.stringify(record, null, 2));
+      const recordBody = JSON.parse(record.body);
+      console.log("Parsed record body: ", JSON.stringify(recordBody, null, 2));
+      
+      const snsMessage = JSON.parse(recordBody.Message);
+      console.log("Parsed SNS message: ", JSON.stringify(snsMessage, null, 2));
 
-    // Check if this is an S3 event
-    if (snsMessage.Records) {
-      for (const messageRecord of snsMessage.Records) {
-        if (messageRecord.eventSource === 'aws:s3' && messageRecord.eventName.startsWith('ObjectCreated:')) {
-          const s3Info = messageRecord.s3;
-          const bucketName = s3Info.bucket.name;
-          // Handle URL encoding in the object key
-          const objectKey = decodeURIComponent(s3Info.object.key.replace(/\+/g, " "));
-          
-          try {
-            // Validate file extension
-            const fileExtension = objectKey.substring(objectKey.lastIndexOf('.')).toLowerCase();
-            if (!VALID_EXTENSIONS.includes(fileExtension)) {
-              console.log(`Invalid file extension: ${fileExtension} for object ${objectKey}`);
-              throw new Error(`Invalid file extension: ${fileExtension}`);
-            }
-
-            // Get the image metadata from S3
-            const headObjectParams = {
-              Bucket: bucketName,
-              Key: objectKey,
-            };
-            const headObjectResponse = await s3Client.send(new HeadObjectCommand(headObjectParams));
+      // Check if this is an S3 event
+      if (snsMessage.Records) {
+        for (const messageRecord of snsMessage.Records) {
+          if (messageRecord.eventSource === 'aws:s3' && messageRecord.eventName.startsWith('ObjectCreated:')) {
+            const s3Info = messageRecord.s3;
+            const bucketName = s3Info.bucket.name;
+            // Handle URL encoding in the object key
+            const objectKey = decodeURIComponent(s3Info.object.key.replace(/\+/g, " "));
             
-            // Create a new entry in DynamoDB
-            const item = {
-              id: objectKey,
-              uploadTime: new Date().toISOString(),
-              size: headObjectResponse.ContentLength,
-              type: headObjectResponse.ContentType,
-            };
+            console.log(`Processing S3 object: ${bucketName}/${objectKey}`);
+            
+            try {
+              // Validate file extension
+              const fileExtension = objectKey.substring(objectKey.lastIndexOf('.')).toLowerCase();
+              console.log(`File extension: ${fileExtension}`);
+              
+              if (!VALID_EXTENSIONS.includes(fileExtension)) {
+                console.log(`Invalid file extension: ${fileExtension} for object ${objectKey}`);
+                throw new Error(`Invalid file extension: ${fileExtension}`);
+              }
 
-            const putParams = {
-              TableName: TABLE_NAME,
-              Item: item,
-            };
+              // Get the image metadata from S3
+              const headObjectParams = {
+                Bucket: bucketName,
+                Key: objectKey,
+              };
+              console.log(`Getting S3 object metadata with params: ${JSON.stringify(headObjectParams)}`);
+              
+              const headObjectResponse = await s3Client.send(new HeadObjectCommand(headObjectParams));
+              console.log(`S3 object metadata: ${JSON.stringify(headObjectResponse)}`);
+              
+              // Create a new entry in DynamoDB
+              const item = {
+                id: objectKey,
+                uploadTime: new Date().toISOString(),
+                size: headObjectResponse.ContentLength,
+                type: headObjectResponse.ContentType,
+              };
 
-            await docClient.send(new PutCommand(putParams));
-            console.log(`Successfully logged image: ${objectKey}`);
-          } catch (error) {
-            console.error(`Error processing image ${objectKey}:`, error);
-            // Re-throw to allow SQS retry/DLQ mechanism to handle invalid files
-            throw error;
+              console.log(`Creating DynamoDB item: ${JSON.stringify(item)}`);
+              
+              const putParams = {
+                TableName: TABLE_NAME,
+                Item: item,
+              };
+
+              const result = await docClient.send(new PutCommand(putParams));
+              console.log(`Successfully logged image to DynamoDB: ${objectKey}, result: ${JSON.stringify(result)}`);
+            } catch (error) {
+              console.error(`Error processing image ${objectKey}:`, error);
+              // Re-throw to allow SQS retry/DLQ mechanism to handle invalid files
+              throw error;
+            }
+          } else {
+            console.log(`Ignoring non-S3 creation event or non-S3 event: ${JSON.stringify(messageRecord)}`);
           }
         }
+      } else {
+        console.log("Message does not contain S3 Records, ignoring");
       }
+    } catch (error) {
+      console.error("Error processing SQS message:", error);
+      // Re-throw to allow SQS retry mechanism
+      throw error;
     }
   }
+  
+  console.log("LogImage Lambda execution completed successfully");
 };
