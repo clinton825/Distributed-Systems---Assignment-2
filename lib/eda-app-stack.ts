@@ -182,14 +182,12 @@ export class EDAAppStack extends cdk.Stack {
       })
     );
 
-    // SNS -> SQS: Subscribe queue to SNS topic with filter for status updates
+    // SNS -> SQS: Subscribe queue to SNS topic for status updates
     newImageTopic.addSubscription(
       new subs.SqsSubscription(statusUpdateQueue, {
-        // Matches messages with update.status in the JSON structure
+        // Use a simple filter policy that checks for the presence of the 'update' field
         filterPolicy: {
-          "update.status": sns.SubscriptionFilter.stringFilter({
-            allowlist: ["Pass", "Reject"],
-          }),
+          "update": sns.SubscriptionFilter.existsFilter(),
         },
         rawMessageDelivery: true
       })
