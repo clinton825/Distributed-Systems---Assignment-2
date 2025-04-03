@@ -1,16 +1,15 @@
-import * as cdk from "aws-cdk-lib";
-import * as lambdanode from "aws-cdk-lib/aws-lambda-nodejs";
-import * as lambda from "aws-cdk-lib/aws-lambda";
-import * as s3 from "aws-cdk-lib/aws-s3";
-import * as s3n from "aws-cdk-lib/aws-s3-notifications";
-import * as events from "aws-cdk-lib/aws-lambda-event-sources";
-import * as sqs from "aws-cdk-lib/aws-sqs";
-import * as sns from "aws-cdk-lib/aws-sns";
-import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
-import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
-import * as iam from "aws-cdk-lib/aws-iam";
-
-import { Construct } from "constructs";
+import * as cdk from 'aws-cdk-lib';
+import { Construct } from 'constructs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as path from 'path';
 
 /**
  * EDA Application Stack for Photo Gallery
@@ -20,148 +19,141 @@ export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // S3 Bucket for storing images
-    const imagesBucket = new s3.Bucket(this, "images", {
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: true,
-      publicReadAccess: false,
-    });
-
     // DynamoDB table for storing image metadata
-    const imagesTable = new dynamodb.Table(this, "ImagesTable", {
-      partitionKey: { name: "id", type: dynamodb.AttributeType.STRING },
+    const imagesTable = new dynamodb.Table(this, 'ImagesTable', {
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
     });
 
-    // SNS Topic for messaging
-    const newImageTopic = new sns.Topic(this, "NewImageTopic", {
-      displayName: "New Image Topic",
+    // S3 bucket for storing images
+    const imagesBucket = new s3.Bucket(this, 'Images', {
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      cors: [
+        {
+          allowedMethods: [
+            s3.HttpMethods.GET,
+            s3.HttpMethods.POST,
+            s3.HttpMethods.PUT,
+          ],
+          allowedOrigins: ['*'],
+          allowedHeaders: ['*'],
+        },
+      ],
     });
 
-    // Dead Letter Queue for invalid image files
-    const deadLetterQueue = new sqs.Queue(this, "DeadLetterQueue", {
-      queueName: "InvalidImagesQueue",
-      receiveMessageWaitTime: cdk.Duration.seconds(10),
+    // SNS topic for new image notifications
+    const newImageTopic = new sns.Topic(this, 'NewImageTopic');
+
+    // SQS queues for different types of processing
+    const validImageQueue = new sqs.Queue(this, 'ValidImageQueue', {
+      visibilityTimeout: cdk.Duration.seconds(30),
+      retentionPeriod: cdk.Duration.days(7),
     });
 
-    // SQS Queue for valid image processing with DLQ
-    const validImageQueue = new sqs.Queue(this, "ValidImageQueue", {
-      receiveMessageWaitTime: cdk.Duration.seconds(10),
-      deadLetterQueue: {
-        queue: deadLetterQueue,
-        maxReceiveCount: 3,
+    const metadataUpdateQueue = new sqs.Queue(this, 'MetadataUpdateQueue', {
+      visibilityTimeout: cdk.Duration.seconds(30),
+      retentionPeriod: cdk.Duration.days(7),
+    });
+
+    const statusUpdateQueue = new sqs.Queue(this, 'StatusUpdateQueue', {
+      visibilityTimeout: cdk.Duration.seconds(30),
+      retentionPeriod: cdk.Duration.days(7),
+    });
+
+    // Lambda functions
+    const logImageFunction = new lambda.Function(this, 'LogImageFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/logImage.ts')),
+      environment: {
+        IMAGES_TABLE: imagesTable.tableName,
       },
     });
 
-    // Queue for metadata updates
-    const metadataUpdateQueue = new sqs.Queue(this, "MetadataUpdateQueue", {
-      receiveMessageWaitTime: cdk.Duration.seconds(10),
+    const removeImageFunction = new lambda.Function(this, 'RemoveImageFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/removeImage.ts')),
+      environment: {
+        IMAGES_TABLE: imagesTable.tableName,
+      },
     });
 
-    // Queue for status updates
-    const statusUpdateQueue = new sqs.Queue(this, "StatusUpdateQueue", {
-      receiveMessageWaitTime: cdk.Duration.seconds(10),
+    const addMetadataFunction = new lambda.Function(this, 'AddMetadataFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/addMetadata.ts')),
+      environment: {
+        IMAGES_TABLE: imagesTable.tableName,
+      },
     });
 
-    // Lambda Function for logging images
-    const logImageFn = new lambdanode.NodejsFunction(
-      this,
-      "LogImageFunction",
-      {
-        runtime: lambda.Runtime.NODEJS_18_X,
-        entry: `${__dirname}/../lambdas/logImage.ts`,
-        timeout: cdk.Duration.seconds(15),
-        memorySize: 128,
-        environment: {
-          IMAGES_TABLE: imagesTable.tableName,
-        },
-      }
-    );
+    const updateStatusFunction = new lambda.Function(this, 'UpdateStatusFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/updateStatus.ts')),
+      environment: {
+        IMAGES_TABLE: imagesTable.tableName,
+      },
+    });
 
-    // Grant permissions for the Lambda functions
-    // LogImage function needs to read from S3 and write to DynamoDB
-    imagesBucket.grantRead(logImageFn);
-    imagesTable.grantWriteData(logImageFn);
+    const statusMailerFunction = new lambda.Function(this, 'StatusMailerFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/statusMailer.ts')),
+      environment: {
+        IMAGES_TABLE: imagesTable.tableName,
+        SES_REGION: 'eu-west-1',
+        SES_EMAIL_FROM: 'your-verified-email@example.com',
+      },
+    });
 
-    // Lambda Function for removing invalid images
-    const removeImageFn = new lambdanode.NodejsFunction(
-      this,
-      "RemoveImageFunction",
-      {
-        runtime: lambda.Runtime.NODEJS_18_X,
-        entry: `${__dirname}/../lambdas/removeImage.ts`,
-        timeout: cdk.Duration.seconds(15),
-        memorySize: 128,
-      }
-    );
+    // Grant permissions
+    imagesTable.grantReadWriteData(logImageFunction);
+    imagesTable.grantReadWriteData(removeImageFunction);
+    imagesTable.grantReadWriteData(addMetadataFunction);
+    imagesTable.grantReadWriteData(updateStatusFunction);
+    imagesTable.grantReadData(statusMailerFunction);
     
-    // RemoveImage function needs to delete from S3
-    imagesBucket.grantDelete(removeImageFn);
+    imagesBucket.grantRead(logImageFunction);
+    imagesBucket.grantReadWrite(removeImageFunction);
 
-    // Lambda Function for adding metadata to images
-    const addMetadataFn = new lambdanode.NodejsFunction(
-      this,
-      "AddMetadataFunction",
-      {
-        runtime: lambda.Runtime.NODEJS_18_X,
-        entry: `${__dirname}/../lambdas/addMetadata.ts`,
-        timeout: cdk.Duration.seconds(15),
-        memorySize: 128,
-        environment: {
-          IMAGES_TABLE: imagesTable.tableName,
-        },
-      }
-    );
-    
-    // AddMetadata function needs to read and write to DynamoDB
-    imagesTable.grantReadWriteData(addMetadataFn);
-
-    // Lambda Function for updating image status
-    const updateStatusFn = new lambdanode.NodejsFunction(
-      this,
-      "UpdateStatusFunction",
-      {
-        runtime: lambda.Runtime.NODEJS_18_X,
-        entry: `${__dirname}/../lambdas/updateStatus.ts`,
-        timeout: cdk.Duration.seconds(15),
-        memorySize: 128,
-        environment: {
-          IMAGES_TABLE: imagesTable.tableName,
-        },
-      }
-    );
-    
-    // UpdateStatus function needs to read and write to DynamoDB
-    imagesTable.grantReadWriteData(updateStatusFn);
-
-    // Lambda Function for sending status update emails
-    const statusMailerFn = new lambdanode.NodejsFunction(
-      this,
-      "StatusMailerFunction",
-      {
-        runtime: lambda.Runtime.NODEJS_18_X,
-        entry: `${__dirname}/../lambdas/statusMailer.ts`,
-        timeout: cdk.Duration.seconds(15),
-        memorySize: 128,
-        environment: {
-          IMAGES_TABLE: imagesTable.tableName,
-        },
-      }
-    );
-    
-    // StatusMailer function needs to read from DynamoDB and send emails via SES
-    imagesTable.grantReadData(statusMailerFn);
-    // Grant SES permissions (requires a specific policy for sending emails)
-    statusMailerFn.addToRolePolicy(
+    // Add SES permissions to the status mailer function
+    statusMailerFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['ses:SendEmail', 'ses:SendRawEmail'],
-        resources: ['*'], // Scope this down to specific resources in production
+        resources: ['*'],
       })
     );
 
-    // S3 -> SNS: Send object creation events to SNS topic
+    // Event sources
+    logImageFunction.addEventSource(
+      new lambdaEventSources.SqsEventSource(validImageQueue)
+    );
+
+    addMetadataFunction.addEventSource(
+      new lambdaEventSources.SqsEventSource(metadataUpdateQueue)
+    );
+
+    updateStatusFunction.addEventSource(
+      new lambdaEventSources.SqsEventSource(statusUpdateQueue)
+    );
+
+    statusMailerFunction.addEventSource(
+      new lambdaEventSources.DynamoEventSource(imagesTable, {
+        startingPosition: lambda.StartingPosition.LATEST,
+        filters: [
+          {
+            pattern: '{ "dynamodb": { "NewImage": { "status": { "S": [{ "anything-but": null }] } } } }',
+          },
+        ],
+        retryAttempts: 3,
+      })
+    );
+
+    // S3 -> SNS: Send notification when an object is created in the bucket
     imagesBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.SnsDestination(newImageTopic)
@@ -170,7 +162,6 @@ export class EDAAppStack extends cdk.Stack {
     // SNS -> SQS: Subscribe queue to SNS topic with filter for image events
     newImageTopic.addSubscription(
       new subs.SqsSubscription(validImageQueue, {
-        // Filter for S3 object creation events
         filterPolicy: {
           "message_type": sns.SubscriptionFilter.stringFilter({
             allowlist: ["s3_event"],
@@ -183,7 +174,6 @@ export class EDAAppStack extends cdk.Stack {
     // SNS -> SQS: Subscribe queue to SNS topic with filter for metadata events
     newImageTopic.addSubscription(
       new subs.SqsSubscription(metadataUpdateQueue, {
-        // Filter for metadata update events
         filterPolicy: {
           "message_type": sns.SubscriptionFilter.stringFilter({
             allowlist: ["metadata_update"],
@@ -196,7 +186,6 @@ export class EDAAppStack extends cdk.Stack {
     // SNS -> SQS: Subscribe queue to SNS topic for status updates
     newImageTopic.addSubscription(
       new subs.SqsSubscription(statusUpdateQueue, {
-        // Filter for status update events
         filterPolicy: {
           "message_type": sns.SubscriptionFilter.stringFilter({
             allowlist: ["status_update"],
@@ -206,66 +195,16 @@ export class EDAAppStack extends cdk.Stack {
       })
     );
 
-    // SQS -> Lambda: Process valid image events
-    const validImageEventSource = new events.SqsEventSource(validImageQueue, {
-      batchSize: 5,
-      maxBatchingWindow: cdk.Duration.seconds(5),
-    });
-    logImageFn.addEventSource(validImageEventSource);
-
-    // DLQ -> Lambda: Process invalid image events
-    const dlqEventSource = new events.SqsEventSource(deadLetterQueue, {
-      batchSize: 5,
-      maxBatchingWindow: cdk.Duration.seconds(5),
-    });
-    removeImageFn.addEventSource(dlqEventSource);
-
-    // SQS -> Lambda: Process metadata update events
-    const metadataEventSource = new events.SqsEventSource(metadataUpdateQueue, {
-      batchSize: 5,
-      maxBatchingWindow: cdk.Duration.seconds(5),
-    });
-    addMetadataFn.addEventSource(metadataEventSource);
-
-    // SQS -> Lambda: Process status update events
-    const statusUpdateEventSource = new events.SqsEventSource(statusUpdateQueue, {
-      batchSize: 5,
-      maxBatchingWindow: cdk.Duration.seconds(5),
-    });
-    updateStatusFn.addEventSource(statusUpdateEventSource);
-
-    // DynamoDB Stream -> Lambda: Trigger status mailer on status updates
-    const streamEventSource = new events.DynamoEventSource(imagesTable, {
-      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
-      batchSize: 5,
-      bisectBatchOnError: true,
-      retryAttempts: 10,
-      filters: [
-        {
-          pattern: JSON.stringify({
-            dynamodb: {
-              NewImage: {
-                status: {
-                  S: ["Pass", "Reject"],
-                },
-              },
-            },
-          }),
-        },
-      ],
-    });
-    statusMailerFn.addEventSource(streamEventSource);
-
     // Outputs
-    new cdk.CfnOutput(this, "bucketName", {
+    new cdk.CfnOutput(this, 'bucketName', {
       value: imagesBucket.bucketName,
     });
-    
-    new cdk.CfnOutput(this, "tableName", {
+
+    new cdk.CfnOutput(this, 'tableName', {
       value: imagesTable.tableName,
     });
-    
-    new cdk.CfnOutput(this, "topicArn", {
+
+    new cdk.CfnOutput(this, 'topicArn', {
       value: newImageTopic.topicArn,
     });
   }
