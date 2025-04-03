@@ -1,4 +1,5 @@
 {
   "id": "sunflower.jpeg",
-  "value": "Beautiful sunflower in a field"
+  "value": "Beautiful sunflower in a field",
+  "message_type": "metadata_update"
 }

@@ -21,31 +21,34 @@ export const handler: SQSHandler = async (event) => {
     try {
       console.log("Processing record: ", JSON.stringify(record, null, 2));
       
-      const recordBody = JSON.parse(record.body);
-      console.log("Parsed record body: ", JSON.stringify(recordBody, null, 2));
-      
-      // Get the message attributes which include metadata_type
-      const messageAttributes = recordBody.MessageAttributes || {};
-      console.log("Message attributes: ", JSON.stringify(messageAttributes, null, 2));
-      
-      // Extract metadata type from message attributes
-      const metadataType = messageAttributes.metadata_type?.Value;
-      console.log("Metadata type: ", metadataType);
-      
-      if (!metadataType || !VALID_METADATA_TYPES.includes(metadataType)) {
-        console.log(`Invalid or missing metadata type: ${metadataType}`);
+      // With rawMessageDelivery: true, the message is directly the JSON payload
+      let message;
+      try {
+        message = JSON.parse(record.body);
+        console.log("Parsed message: ", JSON.stringify(message, null, 2));
+      } catch (error) {
+        console.error("Error parsing message body:", error);
+        continue;
+      }
+
+      // Validate message type
+      if (message.message_type !== 'metadata_update') {
+        console.log(`Unexpected message type: ${message.message_type}, expected 'metadata_update'`);
         continue;
       }
       
-      const snsMessage = JSON.parse(recordBody.Message);
-      console.log("Parsed SNS message: ", JSON.stringify(snsMessage, null, 2));
-      
       // Extract metadata values
-      const { id, value } = snsMessage;
-      console.log(`Extracted id: ${id}, value: ${value}, metadata type: ${metadataType}`);
+      const { id, value, metadata_type = 'description' } = message;
+      console.log(`Extracted id: ${id}, value: ${value}, metadata type: ${metadata_type}`);
       
       if (!id || !value) {
         console.log("Missing required fields (id or value), skipping message");
+        continue;
+      }
+
+      // Validate metadata type
+      if (!VALID_METADATA_TYPES.includes(metadata_type)) {
+        console.log(`Invalid metadata type: ${metadata_type}, must be one of ${VALID_METADATA_TYPES.join(', ')}`);
         continue;
       }
 
@@ -68,7 +71,7 @@ export const handler: SQSHandler = async (event) => {
 
       // Map metadata type to attribute name
       let attributeName = '';
-      switch(metadataType) {
+      switch(metadata_type) {
         case 'description':
           attributeName = 'description';
           break;
@@ -83,7 +86,7 @@ export const handler: SQSHandler = async (event) => {
           break;
         default:
           // This should never happen due to the validation above
-          console.log(`Unexpected metadata type: ${metadataType}`);
+          console.log(`Unexpected metadata type: ${metadata_type}`);
           continue;
       }
 

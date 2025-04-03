@@ -22,15 +22,37 @@ export const handler: SQSHandler = async (event) => {
   for (const record of event.Records) {
     try {
       console.log("Processing record: ", JSON.stringify(record, null, 2));
-      const recordBody = JSON.parse(record.body);
-      console.log("Parsed record body: ", JSON.stringify(recordBody, null, 2));
       
-      const snsMessage = JSON.parse(recordBody.Message);
-      console.log("Parsed SNS message: ", JSON.stringify(snsMessage, null, 2));
+      // With rawMessageDelivery: true, the message is directly the JSON payload
+      let message;
+      try {
+        // For S3 events, we may receive the message in different formats
+        // Try to parse the body first
+        message = JSON.parse(record.body);
+        console.log("Parsed message: ", JSON.stringify(message, null, 2));
+        
+        // If this is an S3 event wrapped in an SNS message, extract the S3 event
+        if (message.Records && message.Records[0]?.eventSource === 'aws:s3') {
+          // This is a direct S3 event
+          console.log("Processing direct S3 event");
+        } else if (message.Message) {
+          // This is an SNS-wrapped message
+          const innerMessage = JSON.parse(message.Message);
+          console.log("Parsed inner message: ", JSON.stringify(innerMessage, null, 2));
+          
+          if (innerMessage.Records && innerMessage.Records[0]?.eventSource === 'aws:s3') {
+            message = innerMessage;
+            console.log("Extracted S3 event from SNS message");
+          }
+        }
+      } catch (error) {
+        console.error("Error parsing message body:", error);
+        continue;
+      }
 
       // Check if this is an S3 event
-      if (snsMessage.Records) {
-        for (const messageRecord of snsMessage.Records) {
+      if (message.Records && message.Records[0]?.eventSource === 'aws:s3') {
+        for (const messageRecord of message.Records) {
           if (messageRecord.eventSource === 'aws:s3' && messageRecord.eventName.startsWith('ObjectCreated:')) {
             const s3Info = messageRecord.s3;
             const bucketName = s3Info.bucket.name;

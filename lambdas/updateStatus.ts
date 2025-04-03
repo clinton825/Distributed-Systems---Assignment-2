@@ -20,14 +20,25 @@ export const handler: SQSHandler = async (event) => {
   for (const record of event.Records) {
     try {
       console.log("Processing record: ", JSON.stringify(record, null, 2));
-      const recordBody = JSON.parse(record.body);
-      console.log("Parsed record body: ", JSON.stringify(recordBody, null, 2));
       
-      const snsMessage = JSON.parse(recordBody.Message);
-      console.log("Parsed SNS message: ", JSON.stringify(snsMessage, null, 2));
+      // With rawMessageDelivery: true, the message is directly the JSON payload
+      let message;
+      try {
+        message = JSON.parse(record.body);
+        console.log("Parsed message: ", JSON.stringify(message, null, 2));
+      } catch (error) {
+        console.error("Error parsing message body:", error);
+        continue;
+      }
+
+      // Validate message type
+      if (message.message_type !== 'status_update') {
+        console.log(`Unexpected message type: ${message.message_type}, expected 'status_update'`);
+        continue;
+      }
 
       // Extract status update details
-      const { id, date, update } = snsMessage;
+      const { id, date, update } = message;
       console.log(`Extracted details - id: ${id}, date: ${date}, update: ${JSON.stringify(update)}`);
       
       if (!id || !update || !update.status) {

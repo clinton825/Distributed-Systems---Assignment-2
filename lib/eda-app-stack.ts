@@ -167,27 +167,40 @@ export class EDAAppStack extends cdk.Stack {
       new s3n.SnsDestination(newImageTopic)
     );
 
-    // SNS -> SQS: Subscribe queue to SNS topic
+    // SNS -> SQS: Subscribe queue to SNS topic with filter for image events
     newImageTopic.addSubscription(
-      new subs.SqsSubscription(validImageQueue)
+      new subs.SqsSubscription(validImageQueue, {
+        // Filter for S3 object creation events
+        filterPolicy: {
+          "message_type": sns.SubscriptionFilter.stringFilter({
+            allowlist: ["s3_event"],
+          }),
+        },
+        rawMessageDelivery: true
+      })
     );
 
     // SNS -> SQS: Subscribe queue to SNS topic with filter for metadata events
     newImageTopic.addSubscription(
       new subs.SqsSubscription(metadataUpdateQueue, {
-        // Requires a MessageAttribute with metadata_type
+        // Filter for metadata update events
         filterPolicy: {
-          metadata_type: sns.SubscriptionFilter.existsFilter(),
+          "message_type": sns.SubscriptionFilter.stringFilter({
+            allowlist: ["metadata_update"],
+          }),
         },
+        rawMessageDelivery: true
       })
     );
 
     // SNS -> SQS: Subscribe queue to SNS topic for status updates
     newImageTopic.addSubscription(
       new subs.SqsSubscription(statusUpdateQueue, {
-        // Use a simple filter policy that checks for the presence of the 'update' field
+        // Filter for status update events
         filterPolicy: {
-          "update": sns.SubscriptionFilter.existsFilter(),
+          "message_type": sns.SubscriptionFilter.stringFilter({
+            allowlist: ["status_update"],
+          }),
         },
         rawMessageDelivery: true
       })

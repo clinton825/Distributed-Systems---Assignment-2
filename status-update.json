@@ -1,8 +1,9 @@
 {
   "id": "sunflower.jpeg",
-  "date": "04/04/2025",
+  "date": "2025-04-04T00:45:00Z",
   "update": {
     "status": "Pass",
     "reason": "Beautiful flower composition"
-  }
+  },
+  "message_type": "status_update"
 }
