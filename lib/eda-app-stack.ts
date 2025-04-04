@@ -10,6 +10,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as path from 'path';
+import * as lambdanode from 'aws-cdk-lib/aws-lambda-nodejs';
 
 /**
  * EDA Application Stack for Photo Gallery
@@ -63,46 +64,46 @@ export class EDAAppStack extends cdk.Stack {
     });
 
     // Lambda functions
-    const logImageFunction = new lambda.Function(this, 'LogImageFunction', {
+    const logImageFunction = new lambdanode.NodejsFunction(this, 'LogImageFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/logImage.ts')),
+      entry: path.join(__dirname, '../lambdas/logImage.ts'),
+      timeout: cdk.Duration.seconds(15),
       environment: {
         IMAGES_TABLE: imagesTable.tableName,
       },
     });
 
-    const removeImageFunction = new lambda.Function(this, 'RemoveImageFunction', {
+    const removeImageFunction = new lambdanode.NodejsFunction(this, 'RemoveImageFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/removeImage.ts')),
+      entry: path.join(__dirname, '../lambdas/removeImage.ts'),
+      timeout: cdk.Duration.seconds(15),
       environment: {
         IMAGES_TABLE: imagesTable.tableName,
       },
     });
 
-    const addMetadataFunction = new lambda.Function(this, 'AddMetadataFunction', {
+    const addMetadataFunction = new lambdanode.NodejsFunction(this, 'AddMetadataFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/addMetadata.ts')),
+      entry: path.join(__dirname, '../lambdas/addMetadata.ts'),
+      timeout: cdk.Duration.seconds(15),
       environment: {
         IMAGES_TABLE: imagesTable.tableName,
       },
     });
 
-    const updateStatusFunction = new lambda.Function(this, 'UpdateStatusFunction', {
+    const updateStatusFunction = new lambdanode.NodejsFunction(this, 'UpdateStatusFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/updateStatus.ts')),
+      entry: path.join(__dirname, '../lambdas/updateStatus.ts'),
+      timeout: cdk.Duration.seconds(15),
       environment: {
         IMAGES_TABLE: imagesTable.tableName,
       },
     });
 
-    const statusMailerFunction = new lambda.Function(this, 'StatusMailerFunction', {
+    const statusMailerFunction = new lambdanode.NodejsFunction(this, 'StatusMailerFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambdas/statusMailer.ts')),
+      entry: path.join(__dirname, '../lambdas/statusMailer.ts'),
+      timeout: cdk.Duration.seconds(15),
       environment: {
         IMAGES_TABLE: imagesTable.tableName,
         SES_REGION: 'eu-west-1',
