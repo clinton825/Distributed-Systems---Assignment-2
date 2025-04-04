@@ -48,10 +48,20 @@ export class EDAAppStack extends cdk.Stack {
     // SNS topic for new image notifications
     const newImageTopic = new sns.Topic(this, 'NewImageTopic');
 
+    // Create a Dead Letter Queue (DLQ) for handling invalid images
+    const invalidImageDLQ = new sqs.Queue(this, 'InvalidImageDLQ', {
+      visibilityTimeout: cdk.Duration.seconds(30),
+      retentionPeriod: cdk.Duration.days(7),
+    });
+
     // SQS queues for different types of processing
     const validImageQueue = new sqs.Queue(this, 'ValidImageQueue', {
       visibilityTimeout: cdk.Duration.seconds(30),
       retentionPeriod: cdk.Duration.days(7),
+      deadLetterQueue: {
+        queue: invalidImageDLQ,
+        maxReceiveCount: 3, // After 3 failed processing attempts, messages go to DLQ
+      },
     });
 
     const metadataUpdateQueue = new sqs.Queue(this, 'MetadataUpdateQueue', {
@@ -133,6 +143,11 @@ export class EDAAppStack extends cdk.Stack {
     // Event sources
     logImageFunction.addEventSource(
       new lambdaEventSources.SqsEventSource(validImageQueue)
+    );
+
+    // Configure removeImageFunction to automatically trigger when messages arrive in the DLQ
+    removeImageFunction.addEventSource(
+      new lambdaEventSources.SqsEventSource(invalidImageDLQ)
     );
 
     addMetadataFunction.addEventSource(
