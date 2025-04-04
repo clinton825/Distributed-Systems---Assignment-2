@@ -15,7 +15,7 @@ The application uses the following AWS services:
 
 ### Architecture Diagram
 
-![Event-Driven Architecture Diagram](images/docs/architecture-diagram.png)
+![image](https://github.com/user-attachments/assets/3b39811d-3cb1-4065-b3c1-6094350bf63f)
 
 The diagram above illustrates the event flow in our application:
 1. Photographers upload images to the S3 bucket
