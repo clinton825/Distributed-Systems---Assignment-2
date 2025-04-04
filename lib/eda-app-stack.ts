@@ -55,15 +55,6 @@ export class EDAAppStack extends cdk.Stack {
     });
 
     // SQS queues for different types of processing
-    const validImageQueue = new sqs.Queue(this, 'ValidImageQueue', {
-      visibilityTimeout: cdk.Duration.seconds(30),
-      retentionPeriod: cdk.Duration.days(7),
-      deadLetterQueue: {
-        queue: invalidImageDLQ,
-        maxReceiveCount: 3, // After 3 failed processing attempts, messages go to DLQ
-      },
-    });
-
     const metadataUpdateQueue = new sqs.Queue(this, 'MetadataUpdateQueue', {
       visibilityTimeout: cdk.Duration.seconds(30),
       retentionPeriod: cdk.Duration.days(7),
@@ -140,9 +131,10 @@ export class EDAAppStack extends cdk.Stack {
       })
     );
 
-    // Event sources
-    logImageFunction.addEventSource(
-      new lambdaEventSources.SqsEventSource(validImageQueue)
+    // Connect S3 directly to the LogImage Lambda without going through SNS for image logging
+    imagesBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.LambdaDestination(logImageFunction)
     );
 
     // Configure removeImageFunction to automatically trigger when messages arrive in the DLQ
@@ -150,14 +142,17 @@ export class EDAAppStack extends cdk.Stack {
       new lambdaEventSources.SqsEventSource(invalidImageDLQ)
     );
 
+    // Configure the AddMetadata function to process messages from the metadata queue
     addMetadataFunction.addEventSource(
       new lambdaEventSources.SqsEventSource(metadataUpdateQueue)
     );
 
+    // Configure the UpdateStatus function to process messages from the status update queue
     updateStatusFunction.addEventSource(
       new lambdaEventSources.SqsEventSource(statusUpdateQueue)
     );
 
+    // Configure the StatusMailer function to process DynamoDB stream events
     statusMailerFunction.addEventSource(
       new lambdaEventSources.DynamoEventSource(imagesTable, {
         startingPosition: lambda.StartingPosition.LATEST,
@@ -165,45 +160,22 @@ export class EDAAppStack extends cdk.Stack {
       })
     );
 
-    // S3 -> SNS: Send notification when an object is created in the bucket
-    imagesBucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new s3n.SnsDestination(newImageTopic)
-    );
-
-    // SNS -> SQS: Subscribe queue to SNS topic with filter for image events
-    newImageTopic.addSubscription(
-      new subs.SqsSubscription(validImageQueue, {
-        filterPolicy: {
-          "message_type": sns.SubscriptionFilter.stringFilter({
-            allowlist: ["s3_event"],
-          }),
-        },
-        rawMessageDelivery: true
-      })
-    );
-
-    // SNS -> SQS: Subscribe queue to SNS topic with filter for metadata events
+    // Subscribe metadataUpdateQueue to SNS topic with filter for metadata_type attribute
     newImageTopic.addSubscription(
       new subs.SqsSubscription(metadataUpdateQueue, {
         filterPolicy: {
-          "message_type": sns.SubscriptionFilter.stringFilter({
-            allowlist: ["metadata_update"],
-          }),
+          "metadata_type": sns.SubscriptionFilter.existsFilter(),
         },
         rawMessageDelivery: true
       })
     );
 
-    // SNS -> SQS: Subscribe queue to SNS topic for status updates
+    // Subscribe statusUpdateQueue to SNS topic with filter for status update messages
+    // These messages should have an 'update' field containing status information
     newImageTopic.addSubscription(
       new subs.SqsSubscription(statusUpdateQueue, {
-        filterPolicy: {
-          "message_type": sns.SubscriptionFilter.stringFilter({
-            allowlist: ["status_update"],
-          }),
-        },
-        rawMessageDelivery: true
+        rawMessageDelivery: true,
+        // No filter policy - we'll filter in the Lambda function
       })
     );
 

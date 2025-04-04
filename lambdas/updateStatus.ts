@@ -1,6 +1,6 @@
 import { SQSHandler } from "aws-lambda";
 import { DynamoDBClient, ReturnValue } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, UpdateCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 const dynamoClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(dynamoClient);
@@ -17,19 +17,27 @@ export const handler: SQSHandler = async (event) => {
 
   for (const record of event.Records) {
     try {
+      console.log("Processing record:", JSON.stringify(record, null, 2));
       let message;
+      
       try {
+        // Parse the message body
         message = JSON.parse(record.body);
+        console.log("Parsed message:", JSON.stringify(message, null, 2));
+        
+        // Check if this is an SNS message
+        if (message.Type === 'Notification' && message.Message) {
+          console.log("SNS message detected, parsing inner message");
+          const innerMessage = JSON.parse(message.Message);
+          console.log("Inner message:", JSON.stringify(innerMessage, null, 2));
+          message = innerMessage;
+        }
       } catch (error) {
-        console.error("Error parsing message body:", error);
+        console.error("Error parsing message:", error);
         continue;
       }
 
-      if (message.message_type !== 'status_update') {
-        console.log(`Unexpected message type: ${message.message_type}, expected 'status_update'`);
-        continue;
-      }
-
+      // Extract message fields based on schema in requirements
       const { id, date, update } = message;
       
       if (!id || !update || !update.status) {
@@ -38,9 +46,11 @@ export const handler: SQSHandler = async (event) => {
       }
 
       if (!VALID_STATUSES.includes(update.status)) {
-        console.log(`Invalid status: ${update.status}, must be 'Pass' or 'Reject'`);
+        console.log(`Invalid status: ${update.status}, must be one of ${VALID_STATUSES.join(', ')}`);
         continue;
       }
+
+      console.log(`Processing status update for image: ${id}, status: ${update.status}, reason: ${update.reason}`);
 
       // Check if the image exists in the database
       const getParams = {
@@ -48,10 +58,24 @@ export const handler: SQSHandler = async (event) => {
         Key: { id }
       };
       
+      console.log("Checking if image exists:", getParams);
       const existingItem = await docClient.send(new GetCommand(getParams));
       
       if (!existingItem.Item) {
-        console.log(`Image with id: ${id} not found in database, skipping update`);
+        console.log(`Image with id: ${id} not found in database, creating new entry`);
+        // Create a new item if it doesn't exist
+        const putParams = {
+          TableName: TABLE_NAME,
+          Item: {
+            id,
+            status: update.status,
+            reason: update.reason || 'No reason provided',
+            reviewDate: date || new Date().toISOString()
+          }
+        };
+
+        await docClient.send(new PutCommand(putParams));
+        console.log(`Created new entry for image: ${id} with status: ${update.status}`);
         continue;
       }
 
@@ -71,10 +95,13 @@ export const handler: SQSHandler = async (event) => {
         ReturnValues: "ALL_NEW" as ReturnValue
       };
 
+      console.log("Updating item:", updateParams);
       const result = await docClient.send(new UpdateCommand(updateParams));
-      console.log(`Successfully updated status for image: ${id}, status: ${update.status}`);
+      console.log(`Successfully updated status for image: ${id}, status: ${update.status}, reason: ${update.reason}`);
     } catch (error) {
       console.error("Error processing status update message:", error);
     }
   }
+  
+  console.log("UpdateStatus Lambda execution completed");
 };

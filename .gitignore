@@ -10,6 +10,9 @@ response.json
 .DS_Store
 
 # Demo and test files
-demo-script.sh
 test-invalid.txt
 sunflower.jpeg
+demo-script.sh
+attributes.json
+message.json
+status_update.json
