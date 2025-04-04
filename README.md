@@ -13,6 +13,18 @@ The application uses the following AWS services:
 - **Lambda**: For serverless processing of events
 - **SES**: For sending email notifications
 
+### Architecture Diagram
+
+![Event-Driven Architecture Diagram](images/docs/architecture-diagram.png)
+
+The diagram above illustrates the event flow in our application:
+1. Photographers upload images to the S3 bucket
+2. S3 bucket sends object created events to the SNS topic
+3. SNS topic filters and routes messages to appropriate SQS queues
+4. Lambda functions process messages from the queues
+5. Status changes in DynamoDB trigger the Status Mailer Lambda
+6. Email notifications are sent to photographers via SES
+
 ## Key Components
 
 ### Lambda Functions
