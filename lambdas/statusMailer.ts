@@ -2,12 +2,12 @@ import { DynamoDBStreamHandler } from "aws-lambda";
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { SES_EMAIL_FROM, SES_REGION, SES_EMAIL_TO } from "../env";
 
 const dynamoClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(dynamoClient);
-const sesClient = new SESClient({ region: process.env.SES_REGION || 'eu-west-1' });
+const sesClient = new SESClient({ region: SES_REGION });
 
-const SES_EMAIL_FROM = process.env.SES_EMAIL_FROM || '';
 const TABLE_NAME = process.env.IMAGES_TABLE || '';
 
 type ImageDetails = {
@@ -22,10 +22,6 @@ type ImageDetails = {
 
 export const handler: DynamoDBStreamHandler = async (event) => {
   console.log("StatusMailer Lambda triggered");
-  
-  if (!SES_EMAIL_FROM) {
-    throw new Error("SES_EMAIL_FROM environment variable is not set");
-  }
 
   if (!TABLE_NAME) {
     throw new Error("TABLE_NAME environment variable is not set");
@@ -75,14 +71,14 @@ export const handler: DynamoDBStreamHandler = async (event) => {
         continue;
       }
 
-      // Default email if photographer's email not available
-      const photographerEmail = imageDetails.email || SES_EMAIL_FROM;
+      // Get photographer details (in a real app, this might come from a user database)
       const photographerName = imageDetails.name || "Photographer";
+      const toEmail = SES_EMAIL_TO; // Using the verified email from env.ts
 
       // Send email notification
       const emailParams = {
         Destination: {
-          ToAddresses: [photographerEmail],
+          ToAddresses: [toEmail],
         },
         Message: {
           Body: {
@@ -103,8 +99,16 @@ export const handler: DynamoDBStreamHandler = async (event) => {
         Source: SES_EMAIL_FROM,
       };
 
-      await sesClient.send(new SendEmailCommand(emailParams));
-      console.log(`Status update email sent to ${photographerEmail} for image ${imageId}`);
+      try {
+        await sesClient.send(new SendEmailCommand(emailParams));
+        console.log(`Status update email sent to ${toEmail} for image ${imageId}`);
+      } catch (error) {
+        console.error("Error sending email:", error);
+        console.log("Email content that would have been sent:");
+        console.log(`To: ${toEmail}`);
+        console.log(`Subject: Photo Status Update: ${imageDetails.status}`);
+        console.log(`Text Content: ${getTextContent(imageDetails, photographerName)}`);
+      }
     } catch (error) {
       console.error("Error processing status change:", error);
     }

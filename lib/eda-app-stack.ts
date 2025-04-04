@@ -11,6 +11,7 @@ import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as path from 'path';
 import * as lambdanode from 'aws-cdk-lib/aws-lambda-nodejs';
+import { SES_REGION, SES_EMAIL_FROM } from '../env';
 
 /**
  * EDA Application Stack for Photo Gallery
@@ -106,8 +107,8 @@ export class EDAAppStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(15),
       environment: {
         IMAGES_TABLE: imagesTable.tableName,
-        SES_REGION: 'eu-west-1',
-        SES_EMAIL_FROM: 'your-verified-email@example.com',
+        SES_REGION,
+        SES_EMAIL_FROM,
       },
     });
 
@@ -145,11 +146,6 @@ export class EDAAppStack extends cdk.Stack {
     statusMailerFunction.addEventSource(
       new lambdaEventSources.DynamoEventSource(imagesTable, {
         startingPosition: lambda.StartingPosition.LATEST,
-        filters: [
-          {
-            pattern: '{ "dynamodb": { "NewImage": { "status": { "S": [{ "anything-but": null }] } } } }',
-          },
-        ],
         retryAttempts: 3,
       })
     );
