@@ -11,10 +11,9 @@ export const handler: SQSHandler = async (event) => {
     try {
       console.log("Processing DLQ record: ", JSON.stringify(record, null, 2));
       
-      // Parse the message body - could be direct SQS message or wrapped SNS
+      // Parse the message body
       let messageBody;
       try {
-        // If it's a string, try to parse it as JSON
         if (typeof record.body === 'string') {
           messageBody = JSON.parse(record.body);
         } else {
@@ -30,7 +29,6 @@ export const handler: SQSHandler = async (event) => {
       if (messageBody.Type === 'Notification' && messageBody.Message) {
         let s3Event;
         try {
-          // Try to parse the message as a JSON string
           if (typeof messageBody.Message === 'string') {
             s3Event = JSON.parse(messageBody.Message);
           } else {
@@ -38,7 +36,6 @@ export const handler: SQSHandler = async (event) => {
           }
           console.log("Parsed S3 event from SNS:", JSON.stringify(s3Event, null, 2));
           
-          // Process the S3 event
           await processS3Event(s3Event);
         } catch (error) {
           console.error("Error parsing SNS message:", error);
@@ -53,7 +50,6 @@ export const handler: SQSHandler = async (event) => {
       // CASE 3: Look for original S3 record in the body.messageAttributes
       else if (messageBody.messageAttributes) {
         console.log("Looking for S3 information in message attributes");
-        // Try to extract S3 bucket and key information from message attributes
         try {
           const bucketName = messageBody.messageAttributes?.bucketName?.stringValue;
           const objectKey = messageBody.messageAttributes?.objectKey?.stringValue;
@@ -70,24 +66,18 @@ export const handler: SQSHandler = async (event) => {
       else {
         console.log("Attempting to find S3 information in the error message");
         
-        // Look for any information about the S3 object in the full record
         try {
-          // The original error might be in a nested property
           const errorMessage = messageBody.errorMessage || record.body;
           
-          // Check if this is a failed S3 event processing
           if (typeof errorMessage === 'string' && 
              (errorMessage.includes('S3') || errorMessage.includes('bucket'))) {
             
-            // Try to find the object key in the original record
             const recordStr = JSON.stringify(record);
             
-            // This is a simple regex to find potential S3 keys ending with .txt
             const objectKeyMatch = recordStr.match(/"([^"]+\.txt)"/);
             if (objectKeyMatch && objectKeyMatch[1]) {
               const objectKey = objectKeyMatch[1];
               
-              // Try to find bucket name
               const bucketMatch = recordStr.match(/"bucket":\s*{\s*"name":\s*"([^"]+)"/);
               if (bucketMatch && bucketMatch[1]) {
                 const bucketName = bucketMatch[1];
@@ -110,7 +100,6 @@ export const handler: SQSHandler = async (event) => {
 
 // Helper function to process an S3 event
 async function processS3Event(s3Event: any): Promise<void> {
-  // Extract S3 bucket and key information
   if (s3Event.Records && s3Event.Records.length > 0) {
     const s3Record = s3Event.Records[0];
     if (s3Record.s3 && s3Record.s3.bucket && s3Record.s3.object) {
@@ -120,7 +109,6 @@ async function processS3Event(s3Event: any): Promise<void> {
       console.log(`Found S3 object: ${objectKey} in bucket: ${bucketName}`);
       
       try {
-        // Delete the invalid file
         await deleteS3Object(bucketName, objectKey);
       } catch (error) {
         console.error(`Error deleting S3 object:`, error);
@@ -130,7 +118,6 @@ async function processS3Event(s3Event: any): Promise<void> {
 }
 
 async function deleteS3Object(bucketName: string, objectKey: string): Promise<void> {
-  // Delete the invalid file from S3
   const deleteParams = {
     Bucket: bucketName,
     Key: objectKey,

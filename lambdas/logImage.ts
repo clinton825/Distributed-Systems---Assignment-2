@@ -37,7 +37,6 @@ export const handler: S3Handler = async (event: S3Event) => {
             throw new Error(`Invalid file extension: ${fileExtension}`);
           }
 
-          // Get the image metadata from S3
           const headObjectParams = {
             Bucket: bucketName,
             Key: objectKey,
@@ -45,7 +44,6 @@ export const handler: S3Handler = async (event: S3Event) => {
           
           const headObjectResponse = await s3Client.send(new HeadObjectCommand(headObjectParams));
           
-          // Create a new entry in DynamoDB
           const item = {
             id: objectKey,
             uploadTime: new Date().toISOString(),
