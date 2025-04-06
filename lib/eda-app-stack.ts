@@ -73,6 +73,12 @@ export class EDAAppStack extends cdk.Stack {
       environment: {
         IMAGES_TABLE: imagesTable.tableName,
       },
+      // Configure DLQ for the LogImage function
+      deadLetterQueue: invalidImageDLQ,
+      // Set the maximum number of retries (0 for immediate routing to DLQ)
+      deadLetterQueueEnabled: true,
+      maxEventAge: cdk.Duration.minutes(2),
+      retryAttempts: 0,
     });
 
     const removeImageFunction = new lambdanode.NodejsFunction(this, 'RemoveImageFunction', {

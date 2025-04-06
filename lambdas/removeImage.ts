@@ -11,95 +11,150 @@ export const handler: SQSHandler = async (event) => {
     try {
       console.log("Processing DLQ record: ", JSON.stringify(record, null, 2));
       
-      // Extract bucket name and object key using regex
-      const bodyStr = typeof record.body === 'string' ? record.body : JSON.stringify(record.body);
-      const bucketMatch = bodyStr.match(/"bucket":\s*{\s*"name":\s*"([^"]+)"/);
-      const keyMatch = bodyStr.match(/"object":\s*{\s*"key":\s*"([^"]+)"/);
-      
-      if (bucketMatch && keyMatch) {
-        const bucketName = bucketMatch[1];
-        const objectKey = keyMatch[1];
-        
-        console.log(`Extracted bucket: ${bucketName} and key: ${objectKey} from message`);
-        
-        try {
-          await deleteS3Object(bucketName, objectKey);
-        } catch (deleteError) {
-          console.error("Error deleting object:", deleteError);
+      // Parse the message body - could be direct SQS message or wrapped SNS
+      let messageBody;
+      try {
+        // If it's a string, try to parse it as JSON
+        if (typeof record.body === 'string') {
+          messageBody = JSON.parse(record.body);
+        } else {
+          messageBody = record.body;
         }
-      } else {
-        console.error("Could not extract S3 information from message");
-        
-        // Try parsing as JSON as a fallback
+        console.log("Parsed message body:", JSON.stringify(messageBody, null, 2));
+      } catch (error) {
+        console.error("Error parsing message body:", error);
+        continue;
+      }
+      
+      // CASE 1: Handle SNS notifications
+      if (messageBody.Type === 'Notification' && messageBody.Message) {
+        let s3Event;
         try {
-          let recordBody = JSON.parse(record.body);
-          console.log("Parsed record body: ", JSON.stringify(recordBody, null, 2));
+          // Try to parse the message as a JSON string
+          if (typeof messageBody.Message === 'string') {
+            s3Event = JSON.parse(messageBody.Message);
+          } else {
+            s3Event = messageBody.Message;
+          }
+          console.log("Parsed S3 event from SNS:", JSON.stringify(s3Event, null, 2));
           
-          let snsMessage;
-          if (recordBody.Type === 'Notification' && recordBody.Message) {
-            // This is an SNS notification
-            console.log("Found SNS notification in DLQ");
+          // Process the S3 event
+          await processS3Event(s3Event);
+        } catch (error) {
+          console.error("Error parsing SNS message:", error);
+          continue;
+        }
+      } 
+      // CASE 2: Handle direct S3 event in the DLQ message
+      else if (messageBody.Records && messageBody.Records[0]?.s3) {
+        console.log("Found direct S3 event in message body");
+        await processS3Event(messageBody);
+      }
+      // CASE 3: Look for original S3 record in the body.messageAttributes
+      else if (messageBody.messageAttributes) {
+        console.log("Looking for S3 information in message attributes");
+        // Try to extract S3 bucket and key information from message attributes
+        try {
+          const bucketName = messageBody.messageAttributes?.bucketName?.stringValue;
+          const objectKey = messageBody.messageAttributes?.objectKey?.stringValue;
+          
+          if (bucketName && objectKey) {
+            console.log(`Found S3 object info in attributes: ${objectKey} in bucket: ${bucketName}`);
+            await deleteS3Object(bucketName, objectKey);
+          }
+        } catch (error) {
+          console.error("Error processing message attributes:", error);
+        }
+      }
+      // CASE 4: Try to extract from the error message itself
+      else {
+        console.log("Attempting to find S3 information in the error message");
+        
+        // Look for any information about the S3 object in the full record
+        try {
+          // The original error might be in a nested property
+          const errorMessage = messageBody.errorMessage || record.body;
+          
+          // Check if this is a failed S3 event processing
+          if (typeof errorMessage === 'string' && 
+             (errorMessage.includes('S3') || errorMessage.includes('bucket'))) {
             
-            // Check if Message is already an object or needs to be parsed
-            if (typeof recordBody.Message === 'string') {
-              snsMessage = JSON.parse(recordBody.Message);
-            } else {
-              snsMessage = recordBody.Message;
-            }
+            // Try to find the object key in the original record
+            const recordStr = JSON.stringify(record);
             
-            console.log("Parsed SNS message: ", JSON.stringify(snsMessage, null, 2));
-            
-            if (snsMessage.Records) {
-              for (const messageRecord of snsMessage.Records) {
-                if (messageRecord.eventSource === 'aws:s3' && messageRecord.eventName.startsWith('ObjectCreated:')) {
-                  const s3Info = messageRecord.s3;
-                  const bucketName = s3Info.bucket.name;
-                  const objectKey = decodeURIComponent(s3Info.object.key.replace(/\+/g, " "));
-                  
-                  console.log(`Removing invalid file: ${objectKey} from bucket: ${bucketName}`);
-                  
-                  try {
-                    await deleteS3Object(bucketName, objectKey);
-                  } catch (error) {
-                    console.error(`Error removing file ${objectKey}:`, error);
-                  }
-                }
+            // This is a simple regex to find potential S3 keys ending with .txt
+            const objectKeyMatch = recordStr.match(/"([^"]+\.txt)"/);
+            if (objectKeyMatch && objectKeyMatch[1]) {
+              const objectKey = objectKeyMatch[1];
+              
+              // Try to find bucket name
+              const bucketMatch = recordStr.match(/"bucket":\s*{\s*"name":\s*"([^"]+)"/);
+              if (bucketMatch && bucketMatch[1]) {
+                const bucketName = bucketMatch[1];
+                console.log(`Extracted from error: ${objectKey} in bucket: ${bucketName}`);
+                await deleteS3Object(bucketName, objectKey);
               }
             }
           }
-        } catch (parseError) {
-          console.error("Error parsing message as JSON:", parseError);
+        } catch (error) {
+          console.error("Error trying to extract S3 info from error message:", error);
         }
       }
     } catch (error) {
-      console.error("Error processing DLQ message:", error);
-      // Continue processing other records even if one fails
+      console.error("Error processing record:", error);
     }
   }
   
   console.log("RemoveImage Lambda execution completed");
 };
 
-async function deleteS3Object(bucketName: string, objectKey: string): Promise<void> {
-  // First check if the file exists
-  const headParams = {
-    Bucket: bucketName,
-    Key: objectKey,
-  };
-  
-  try {
-    await s3Client.send(new HeadObjectCommand(headParams));
-  } catch (error) {
-    console.log(`File ${objectKey} does not exist in bucket ${bucketName}, skipping deletion`);
-    return;
+// Helper function to process an S3 event
+async function processS3Event(s3Event: any): Promise<void> {
+  // Extract S3 bucket and key information
+  if (s3Event.Records && s3Event.Records.length > 0) {
+    const s3Record = s3Event.Records[0];
+    if (s3Record.s3 && s3Record.s3.bucket && s3Record.s3.object) {
+      const bucketName = s3Record.s3.bucket.name;
+      const objectKey = decodeURIComponent(s3Record.s3.object.key.replace(/\+/g, " "));
+      
+      console.log(`Found S3 object: ${objectKey} in bucket: ${bucketName}`);
+      
+      try {
+        // Delete the invalid file
+        await deleteS3Object(bucketName, objectKey);
+      } catch (error) {
+        console.error(`Error deleting S3 object:`, error);
+      }
+    }
   }
-  
+}
+
+async function deleteS3Object(bucketName: string, objectKey: string): Promise<void> {
   // Delete the invalid file from S3
   const deleteParams = {
     Bucket: bucketName,
     Key: objectKey,
   };
   
-  await s3Client.send(new DeleteObjectCommand(deleteParams));
-  console.log(`Successfully removed invalid file: ${objectKey}`);
+  try {
+    // Check if the object exists first
+    try {
+      const headParams = {
+        Bucket: bucketName,
+        Key: objectKey,
+      };
+      await s3Client.send(new HeadObjectCommand(headParams));
+      console.log(`Object ${objectKey} exists in bucket ${bucketName}.`);
+    } catch (error) {
+      console.log(`Object ${objectKey} does not exist in bucket ${bucketName}. Skipping deletion.`);
+      return;
+    }
+    
+    // Delete the object
+    await s3Client.send(new DeleteObjectCommand(deleteParams));
+    console.log(`Successfully removed invalid file: ${objectKey}`);
+  } catch (error) {
+    console.error(`Error deleting object ${objectKey} from bucket ${bucketName}:`, error);
+    throw error;
+  }
 }

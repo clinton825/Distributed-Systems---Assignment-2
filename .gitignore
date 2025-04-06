@@ -12,7 +12,10 @@ response.json
 # Demo and test files
 test-invalid.txt
 sunflower.jpeg
-demo-script.sh
 attributes.json
 message.json
+demo-script.sh
+temp_status_update.json
+mountain.jpeg
+images/
 status_update.json
