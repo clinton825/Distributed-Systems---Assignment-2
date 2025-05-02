@@ -1,3 +1,7 @@
+__Name:__ Clinton Bempah (20097793)
+
+__Demo:__ [YouTube Demonstration](https://youtu.be/5T2Aj4UZaBA)
+
 # Event-Driven Architecture Photo Gallery Application
 
 This project implements a photo gallery application using AWS services and an event-driven architecture. The application supports functionalities such as image logging, metadata updating, invalid image removal, status updating, and email notifications.
